@@ -1,0 +1,52 @@
+.root {
+    -fx-font-family: "Segoe UI", sans-serif;
+    -fx-font-size: 13px;
+    -fx-base: #2b2f38;
+    -fx-background: #1e2128;
+    -fx-control-inner-background: #262a33;
+    -fx-accent: #4f8cff;
+}
+
+.top-bar {
+    -fx-background-color: #20242c;
+    -fx-border-color: transparent transparent #10131a transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.app-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #f2f4f8;
+}
+
+.app-subtitle {
+    -fx-text-fill: #8a91a3;
+    -fx-font-size: 12px;
+}
+
+.local-peer-info {
+    -fx-text-fill: #c7cbd6;
+    -fx-font-family: monospace;
+}
+
+.toolbar {
+    -fx-background-color: #23272f;
+    -fx-border-color: transparent transparent #10131a transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.log-panel {
+    -fx-background-color: #1a1d23;
+    -fx-border-color: #10131a transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.log-title {
+    -fx-text-fill: #8a91a3;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.table-view {
+    -fx-background-color: transparent;
+}
