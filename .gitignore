@@ -5,6 +5,6 @@ logs/
 *.iml
 .vscode/
 .DS_Store
-config/
-downloads/
-shared/
+/config/
+/downloads/
+/shared/
