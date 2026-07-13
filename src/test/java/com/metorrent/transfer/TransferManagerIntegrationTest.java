@@ -5,6 +5,7 @@ import com.metorrent.network.MessageDispatcher;
 import com.metorrent.peer.Peer;
 import com.metorrent.peer.PeerManager;
 import com.metorrent.peer.PeerRegistry;
+import com.metorrent.peer.PeerStatus;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -64,6 +65,40 @@ class TransferManagerIntegrationTest {
         Path downloaded = bob.downloadDir.resolve("hello.txt");
         assertTrue(Files.exists(downloaded));
         assertEquals("Hello, meTorrent!", Files.readString(downloaded, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void peerConnectionSurvivesMultipleDownloadsWithoutFlappingToDisconnected(@TempDir Path root) throws Exception {
+        // Regression test: each download opens its own dedicated connection (docs/PROTOCOL.md
+        // section 4). PeerManager must not mistake that transfer connection for the control
+        // connection - otherwise the peer appears to disconnect the instant each download's
+        // connection closes, even though the real control connection is still open.
+        alice = Node.start("Alice", root.resolve("alice"));
+        bob = Node.start("Bob", root.resolve("bob"));
+        connect(alice, bob);
+
+        Files.writeString(alice.sharedDir.resolve("hello.txt"), "Hello, meTorrent!", StandardCharsets.UTF_8);
+        alice.fileManager.getSharedFolder().refresh();
+
+        String aliceId = peerIdOf(bob, alice);
+        String bobId = peerIdOf(alice, bob);
+        bob.transferManager.requestFileList(aliceId);
+        waitUntil(() -> !bob.transferManager.getCachedRemoteFiles(aliceId).isEmpty());
+        RemoteFileEntry remoteFile = bob.transferManager.getCachedRemoteFiles(aliceId).get(0);
+
+        for (int i = 0; i < 3; i++) {
+            Transfer download = bob.transferManager.requestDownload(aliceId, remoteFile);
+            waitUntil(() -> download.getStatus() == TransferStatus.COMPLETED || download.getStatus() == TransferStatus.FAILED);
+            assertEquals(TransferStatus.COMPLETED, download.getStatus());
+
+            // Give PeerManager a moment to (incorrectly, if the bug regresses) process any
+            // stray HELLO and react to the transfer connection closing.
+            Thread.sleep(150);
+            assertEquals(PeerStatus.CONNECTED, bob.registry.get(aliceId).orElseThrow().getStatus(),
+                    "Bob's view of Alice flipped to disconnected after download #" + i);
+            assertEquals(PeerStatus.CONNECTED, alice.registry.get(bobId).orElseThrow().getStatus(),
+                    "Alice's view of Bob flipped to disconnected after download #" + i);
+        }
     }
 
     @Test

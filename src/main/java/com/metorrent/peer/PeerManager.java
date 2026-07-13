@@ -12,6 +12,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
@@ -26,6 +28,15 @@ import java.util.concurrent.TimeUnit;
  * types (HELLO/PING/PONG/DISCONNECT/ERROR) - transfer-related types are
  * handled by a separate listener in the transfer module, keeping the two
  * concerns decoupled.
+ *
+ * <p>Inbound connections are only greeted with a HELLO reactively (in
+ * {@link #handleHello}), never proactively on accept. This matters because
+ * {@code transfer.TransferManager} opens its own dedicated connection per
+ * transfer (see docs/PROTOCOL.md section 4) and never sends a HELLO on it -
+ * if this class greeted every accepted socket unconditionally, that stray
+ * HELLO would make {@link #handleHello} overwrite the peer's registry entry
+ * with the transfer connection, and the peer would appear to disconnect the
+ * moment that transfer connection closed at the end of the transfer.
  */
 public class PeerManager implements MessageListener {
 
@@ -38,6 +49,7 @@ public class PeerManager implements MessageListener {
     private final MessageDispatcher dispatcher;
     private final PeerServer server;
     private final PeerClient client = new PeerClient();
+    private final Set<String> helloSentConnectionIds = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService pingExecutor =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "peer-ping-scheduler");
@@ -75,7 +87,8 @@ public class PeerManager implements MessageListener {
 
         Connection connection = client.connect(host, port);
         peer.setConnection(connection);
-        registerAndGreet(connection);
+        dispatcher.listen(connection);
+        sendHelloOnce(connection);
         return peer;
     }
 
@@ -109,12 +122,21 @@ public class PeerManager implements MessageListener {
         server.stop();
     }
 
+    /**
+     * Inbound connections are only registered with the dispatcher here, not
+     * greeted - see the class-level note on why sending a HELLO must wait
+     * until we know (via {@link #handleHello}) that the other side sent one
+     * first, rather than assuming every accepted socket is a peer greeting.
+     */
     private void handleInboundConnection(Connection connection) {
-        registerAndGreet(connection);
+        dispatcher.listen(connection);
     }
 
-    private void registerAndGreet(Connection connection) {
-        dispatcher.listen(connection);
+    /** Sends our HELLO on this connection exactly once, however it gets triggered. */
+    private void sendHelloOnce(Connection connection) {
+        if (!helloSentConnectionIds.add(connection.getConnectionId())) {
+            return;
+        }
         try {
             connection.sendMessage(Message.builder(MessageType.HELLO)
                     .field("peerName", localName)
@@ -148,6 +170,7 @@ public class PeerManager implements MessageListener {
 
     @Override
     public void onConnectionClosed(Connection connection, Throwable cause) {
+        helloSentConnectionIds.remove(connection.getConnectionId());
         registry.findByConnectionId(connection.getConnectionId()).ifPresent(peer -> {
             if (peer.getConnection() == connection) {
                 peer.setStatus(PeerStatus.DISCONNECTED);
@@ -171,6 +194,11 @@ public class PeerManager implements MessageListener {
         peer.setConnection(connection);
         registry.put(peer);
         log.info("Peer connected: {}", peer);
+
+        // Reply in kind if this connection reached us passively (we didn't
+        // greet it on accept - see the class-level note); a no-op if we're
+        // the side that greeted first, so this never causes a HELLO ping-pong.
+        sendHelloOnce(connection);
     }
 
     private void handlePing(Connection connection, Message message) {
